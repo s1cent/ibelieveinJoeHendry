@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Joe Hendry Believers Shooter Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #debug, #blockCount, #winScreen { position: absolute; color: white; font-family: Arial, sans-serif; }
+        #debug { top: 10px; left: 10px; font-size: 12px; }
+        #blockCount { top: 10px; right: 10px; font-size: 18px; }
+        #winScreen { 
+            display: none; 
+            top: 50%; left: 50%; 
+            transform: translate(-50%, -50%); 
+            text-align: center; 
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+        #restartButton {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="debug"></div>
+    <div id="blockCount"></div>
+    <div id="winScreen">
+        <h2>You are now an official member of the Joe Hendry Believers.</h2>
+        <h3>We welcome you, cult member.</h3>
+        <button id="restartButton">Restart Game</button>
+    </div>
+    <div id="crosshair">+</div>
+    <script>
+        // Set up the scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Debug and UI elements
+        const debugElement = document.getElementById('debug');
+        const blockCountElement = document.getElementById('blockCount');
+        const winScreenElement = document.getElementById('winScreen');
+        const restartButton = document.getElementById('restartButton');
+
+        // Game state
+        let blocks = [];
+        let totalBlocks = 20;
+        let bullets = [];
+        let pitch = 0;
+        let yaw = 0;
+
+        function updateDebugInfo() {
+            debugElement.innerHTML = `
+                Player Position: (${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)})
+                Camera Rotation: (${pitch.toFixed(2)}, ${yaw.toFixed(2)})
+            `;
+            blockCountElement.innerHTML = `Blocks remaining: ${blocks.length}`;
+        }
+
+        function createTextTexture(text, width, height, fontSize, bgColor = 'white', textColor = 'black', reverse = false) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = width;
+            canvas.height = height;
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, width, height);
+            ctx.fillStyle = textColor;
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (reverse) {
+                ctx.scale(-1, 1);
+                ctx.translate(-width / 2, height / 2);
+                ctx.fillText(text, 0, 0);
+            } else {
+                ctx.fillText(text, width / 2, height / 2);
+            }
+            
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Create floor
+        const floorTexture = createTextTexture('I believe in Joe Hendry', 1024, 1024, 48);
+        floorTexture.wrapS = THREE.RepeatWrapping;
+        floorTexture.wrapT = THREE.RepeatWrapping;
+        floorTexture.repeat.set(4, 4);
+        const floorMaterial = new THREE.MeshBasicMaterial({ map: floorTexture });
+        const floorGeometry = new THREE.PlaneGeometry(40, 40);
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        scene.add(floor);
+
+        // Create walls with white background and black text (reversed for correct inside view)
+        const wallTexture = createTextTexture('I believe in Joe Hendry', 1024, 128, 48, 'white', 'black', true);
+        wallTexture.wrapS = THREE.RepeatWrapping;
+        wallTexture.wrapT = THREE.RepeatWrapping;
+        wallTexture.repeat.set(4, 2);
+        const wallMaterial = new THREE.MeshBasicMaterial({ map: wallTexture, side: THREE.BackSide });
+        const wallGeometry = new THREE.CylinderGeometry(20, 20, 10, 32, 1, true);
+        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+        wall.position.y = 5;
+        scene.add(wall);
+
+        // Create shootable blocks (enemies)
+        function createBlock() {
+            const blockTexture = createTextTexture('I believe in Joe Hendry', 256, 256, 24);
+            const blockMaterial = new THREE.MeshBasicMaterial({ map: blockTexture, color: 0xff0000 }); // Red color
+            const blockGeometry = new THREE.BoxGeometry(2, 2, 2);
+            const block = new THREE.Mesh(blockGeometry, blockMaterial);
+            
+            // Random position within the arena, closer to the ground
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * 15 + 3; // Keep within the arena radius, but not too close to the center
+            block.position.set(
+                Math.cos(angle) * radius,
+                Math.random() * 3 + 1, // Random height between 1 and 4
+                Math.sin(angle) * radius
+            );
+            
+            scene.add(block);
+            blocks.push(block);
+        }
+
+        function initializeBlocks() {
+            for (let i = 0; i < totalBlocks; i++) {
+                createBlock();
+            }
+        }
+
+        // Set initial camera position
+        camera.position.set(0, 1.7, 0);
+
+        // Handle key presses for movement
+        const keys = {};
+        document.addEventListener('keydown', (event) => keys[event.code] = true);
+        document.addEventListener('keyup', (event) => keys[event.code] = false);
+
+        // Handle mouse movement for camera rotation
+        document.addEventListener('mousemove', (event) => {
+            if (document.pointerLockElement === document.body) {
+                yaw -= event.movementX * 0.002;
+                pitch -= event.movementY * 0.002;
+                pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
+                updateCameraRotation();
+            }
+        });
+
+        function updateCameraRotation() {
+            camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+        }
+
+        // Handle shooting
+        document.addEventListener('click', () => {
+            if (document.pointerLockElement !== document.body) {
+                document.body.requestPointerLock();
+            } else {
+                shoot();
+            }
+        });
+
+        function shoot() {
+            const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+            const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+            
+            bullet.position.set(camera.position.x, camera.position.y, camera.position.z);
+            bullet.quaternion.copy(camera.quaternion);
+            
+            const speed = 1;
+            const velocity = new THREE.Vector3(0, 0, -speed);
+            velocity.applyQuaternion(camera.quaternion);
+            
+            bullet.userData.velocity = velocity;
+            
+            scene.add(bullet);
+            bullets.push(bullet);
+            
+            setTimeout(() => {
+                scene.remove(bullet);
+                bullets.splice(bullets.indexOf(bullet), 1);
+            }, 2000);
+        }
+
+        function updateBullets() {
+            for (let i = 0; i < bullets.length; i++) {
+                const bullet = bullets[i];
+                bullet.position.add(bullet.userData.velocity);
+                
+                // Check for collisions with blocks
+                for (let j = 0; j < blocks.length; j++) {
+                    const block = blocks[j];
+                    if (bullet.position.distanceTo(block.position) < 1) {
+                        scene.remove(block);
+                        blocks.splice(j, 1);
+                        scene.remove(bullet);
+                        bullets.splice(i, 1);
+                        i--;
+                        break;
+                    }
+                }
+            }
+            
+            if (blocks.length === 0) {
+                showWinScreen();
+            }
+        }
+
+        function showWinScreen() {
+            winScreenElement.style.display = 'block';
+            document.exitPointerLock();
+        }
+
+        function restartGame() {
+            blocks.forEach(block => scene.remove(block));
+            blocks = [];
+            bullets.forEach(bullet => scene.remove(bullet));
+            bullets = [];
+            initializeBlocks();
+            winScreenElement.style.display = 'none';
+            camera.position.set(0, 1.7, 0);
+            pitch = 0;
+            yaw = 0;
+            updateCameraRotation();
+        }
+
+        restartButton.addEventListener('click', restartGame);
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (document.pointerLockElement === document.body) {
+                const moveSpeed = 0.1;
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+
+                if (keys['KeyW']) camera.position.addScaledVector(forward, moveSpeed);
+                if (keys['KeyS']) camera.position.addScaledVector(forward, -moveSpeed);
+                if (keys['KeyA']) camera.position.addScaledVector(right, -moveSpeed);
+                if (keys['KeyD']) camera.position.addScaledVector(right, moveSpeed);
+
+                // Keep the player within the arena
+                const distance = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+                if (distance > 19) {
+                    const angle = Math.atan2(camera.position.z, camera.position.x);
+                    camera.position.x = 19 * Math.cos(angle);
+                    camera.position.z = 19 * Math.sin(angle);
+                }
+
+                // Keep the player on the ground
+                camera.position.y = 1.7;
+            }
+
+            updateBullets();
+            updateDebugInfo();
+            renderer.render(scene, camera);
+        }
+
+        // Initialize and start the game
+        initializeBlocks();
+        animate();
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
